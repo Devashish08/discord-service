@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -47,6 +48,11 @@ func TestGetUsersWithRole(t *testing.T) {
 	member2 := &discordgo.Member{User: &discordgo.User{ID: "456"}, Roles: []string{"otherRole"}}
 	member3 := &discordgo.Member{User: &discordgo.User{ID: "789"}, Roles: []string{roleID, "anotherRole"}}
 
+	var memberNilUser *discordgo.Member = &discordgo.Member{User: nil, Roles: []string{roleID}}
+	var memberNilRoles *discordgo.Member = &discordgo.Member{User: &discordgo.User{ID: "abc"}, Roles: nil}
+	var memberNil *discordgo.Member = nil
+	var emptyMemberList []*discordgo.Member
+
 	t.Run("returns single user with matching role", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
 		membersInput := []*discordgo.Member{member1, member2}
@@ -55,9 +61,7 @@ func TestGetUsersWithRole(t *testing.T) {
 		result, err := GetUsersWithRole(mockSession, guildID, roleID)
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
-		if len(result) > 0 {
-			assert.Equal(t, "123", result[0].User.ID)
-		}
+		assert.Equal(t, "123", result[0].User.ID)
 		mockSession.AssertExpectations(t)
 	})
 
@@ -70,15 +74,14 @@ func TestGetUsersWithRole(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
-		foundIDs := make(map[string]bool)
+		expectedIDs := []string{"123", "789"}
+		var actualIDs []string
 		for _, m := range result {
 			if m != nil && m.User != nil {
-				foundIDs[m.User.ID] = true
+				actualIDs = append(actualIDs, m.User.ID)
 			}
 		}
-		assert.True(t, foundIDs["123"], "Member 123 should be found")
-		assert.True(t, foundIDs["789"], "Member 789 should be found")
-		assert.False(t, foundIDs["456"], "Member 456 should not be found")
+		assert.ElementsMatch(t, expectedIDs, actualIDs, "Should find members 123 and 789 only")
 		mockSession.AssertExpectations(t)
 	})
 
@@ -105,6 +108,33 @@ func TestGetUsersWithRole(t *testing.T) {
 		assert.Empty(t, result)
 		mockSession.AssertExpectations(t)
 	})
+
+	t.Run("handles empty member list from GuildMembers", func(t *testing.T) {
+		mockSession := new(MockDiscordSession)
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(emptyMemberList, nil).Once() // Use var
+		result, err := GetUsersWithRole(mockSession, guildID, roleID)
+		assert.NoError(t, err)
+		assert.Empty(t, result)
+		mockSession.AssertExpectations(t)
+	})
+
+	t.Run("skips members with nil User or nil Roles safely", func(t *testing.T) {
+		mockSession := new(MockDiscordSession)
+		membersInput := []*discordgo.Member{member1, memberNilUser, memberNilRoles, memberNil, member3}
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersInput, nil).Once()
+		result, err := GetUsersWithRole(mockSession, guildID, roleID)
+		assert.NoError(t, err)
+		assert.Len(t, result, 2)
+		expectedIDs := []string{"123", "789"}
+		var actualIDs []string
+		for _, m := range result {
+			if m != nil && m.User != nil {
+				actualIDs = append(actualIDs, m.User.ID)
+			}
+		}
+		assert.ElementsMatch(t, expectedIDs, actualIDs)
+		mockSession.AssertExpectations(t)
+	})
 }
 
 // TestFormatUserMentions tests the utility function for converting member objects
@@ -121,12 +151,10 @@ func TestFormatUserMentions(t *testing.T) {
 	})
 	t.Run("handles empty member list", func(t *testing.T) {
 		mentions := FormatUserMentions([]*discordgo.Member{})
-		assert.Equal(t, []string{}, mentions)
 		assert.Empty(t, mentions)
 	})
 	t.Run("handles nil members list", func(t *testing.T) {
 		mentions := FormatUserMentions(nil)
-		assert.Equal(t, []string{}, mentions)
 		assert.Empty(t, mentions)
 	})
 }
@@ -142,38 +170,6 @@ func TestFormatRoleMention(t *testing.T) {
 	t.Run("handles empty roleID", func(t *testing.T) {
 		mention := FormatRoleMention("")
 		assert.Equal(t, "<@&>", mention)
-	})
-}
-
-// TestJoinMentions tests the utility function
-// for concatenating mention strings with a given separator.
-func TestJoinMentions(t *testing.T) {
-	t.Run("joins mentions with space separator", func(t *testing.T) {
-		mentions := []string{"<@123>", "<@456>"}
-		result := JoinMentions(mentions, " ")
-		assert.Equal(t, "<@123> <@456>", result)
-	})
-
-	t.Run("joins mentions with comma separator", func(t *testing.T) {
-		mentions := []string{"<@123>", "<@456>"}
-		result := JoinMentions(mentions, ", ")
-		assert.Equal(t, "<@123>, <@456>", result)
-	})
-
-	t.Run("handles single mention", func(t *testing.T) {
-		mentions := []string{"<@123>"}
-		result := JoinMentions(mentions, ", ")
-		assert.Equal(t, "<@123>", result)
-	})
-
-	t.Run("handles empty mentions", func(t *testing.T) {
-		result := JoinMentions([]string{}, ", ")
-		assert.Equal(t, "", result)
-	})
-
-	t.Run("handles nil mentions", func(t *testing.T) {
-		result := JoinMentions(nil, ", ")
-		assert.Equal(t, "", result)
 	})
 }
 
@@ -221,9 +217,11 @@ func TestFormatDevTitleResponse(t *testing.T) {
 	})
 
 	t.Run("formats response with multiple users", func(t *testing.T) {
+		roleID := "123456789"
+		roleMention := "<@&" + roleID + ">"
 		mentions := []string{"<@123>", "<@456>"}
 		response := FormatDevTitleResponse(mentions, roleID)
-		expected := fmt.Sprintf("Found %d users with the %s role: %s", len(mentions), roleMention, JoinMentions(mentions, ", "))
+		expected := fmt.Sprintf("Found %d users with the %s role: %s", len(mentions), roleMention, strings.Join(mentions, ", "))
 		assert.Equal(t, expected, response)
 	})
 

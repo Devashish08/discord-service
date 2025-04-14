@@ -459,16 +459,17 @@ func TestFetchMembersWithRoleLogic(t *testing.T) {
 	member2 := &discordgo.Member{User: &discordgo.User{ID: "u2"}, Roles: []string{"other"}}
 	membersListInput := []*discordgo.Member{member1, member2}
 	expectedOutput := []*discordgo.Member{member1}
-	mockErr := errors.New("fetch error")
 	var emptyMemberList []*discordgo.Member
 
 	t.Run("Success - Members found", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-
+		// --- Mock the underlying session call ---
 		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersListInput, nil).Once()
 
+		// Act: Call the REAL fetchMembersWithRoleFunc
 		members, err := fetchMembersWithRoleFunc(mockSession, guildID, roleID, channelID)
 
+		// Assert
 		assert.NoError(t, err)
 		assert.Equal(t, expectedOutput, members)
 		mockSession.AssertExpectations(t)
@@ -487,39 +488,66 @@ func TestFetchMembersWithRoleLogic(t *testing.T) {
 		mockSession.AssertNotCalled(t, "ChannelMessageSend", mock.Anything, mock.Anything)
 	})
 
+	// commands/handlers/mentionEachHandler_test.go
+
+	// Inside TestFetchMembersWithRoleLogic
 	t.Run("Error - GuildMembers fails, sending error message succeeds", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
+		// --- Mock the underlying session call to fail ---
+		originalError := errors.New("API error from GuildMembers")
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, originalError).Once()
 
-		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, mockErr).Once()
+		// --- Construct the EXACT error message string the code will generate ---
+		// 1. Simulate the error returned by utils.GetUsersWithRole
+		errFromGetUsers := fmt.Errorf("failed to fetch guild members chunk: %w", originalError)
+		// 2. Construct the message string using THAT error
+		expectedErrorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, errFromGetUsers)
+		// --- End Construction ---
 
-		expectedErrorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, fmt.Errorf("failed to fetch guild members: %w", mockErr)) // Match the wrapped error msg
-		mockSession.On("ChannelMessageSend", channelID, expectedErrorMsg).Return(&discordgo.Message{}, nil).Once()                                                // Simulate send success
+		// --- Expect the EXACT error message string ---
+		mockSession.On("ChannelMessageSend", channelID, expectedErrorMsg).Return(&discordgo.Message{}, nil).Once()
+		// --- End Expect ---
 
+		// Act: Call the REAL fetchMembersWithRoleFunc
 		members, err := fetchMembersWithRoleFunc(mockSession, guildID, roleID, channelID)
 
+		// Assert
 		assert.Error(t, err)
-		assert.ErrorContains(t, err, mockErr.Error())
-		assert.ErrorContains(t, err, "failed to fetch guild members")
+		// Check the error returned by fetchMembersWithRoleFunc IS the wrapped error from GetUsersWithRole
+		assert.Equal(t, errFromGetUsers, err) // Use Equal here to compare the wrapped errors directly
 		assert.Nil(t, members)
-		mockSession.AssertExpectations(t)
+		mockSession.AssertExpectations(t) // Verify ChannelMessageSend WAS called
 	})
 
 	t.Run("Error - GuildMembers fails, sending error message fails", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
 		sendErr := errors.New("send failed")
-		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, mockErr).Once() // Simulate fetch failure
+		originalError := errors.New("API error from GuildMembers")
 
-		expectedErrorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, fmt.Errorf("failed to fetch guild members: %w", mockErr)) // Match wrapped error
-		mockSession.On("ChannelMessageSend", channelID, expectedErrorMsg).Return(nil, sendErr).Once()                                                             // Simulate send failure
+		// --- Mock the underlying session call to fail ---
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, originalError).Once()
 
+		// --- Construct the EXACT error message string the code will generate ---
+		errFromGetUsers := fmt.Errorf("failed to fetch guild members chunk: %w", originalError)
+		expectedErrorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, errFromGetUsers)
+		// --- End Construction ---
+
+		// --- Expect the EXACT error message string, but mock its return to fail ---
+		mockSession.On("ChannelMessageSend", channelID, expectedErrorMsg).Return(nil, sendErr).Once()
+		// --- End Expect ---
+
+		// Act: Call the REAL fetchMembersWithRoleFunc
 		members, err := fetchMembersWithRoleFunc(mockSession, guildID, roleID, channelID)
 
+		// Assert
 		assert.Error(t, err)
-		assert.ErrorContains(t, err, mockErr.Error())
-		assert.ErrorContains(t, err, "failed to fetch guild members")
+		// Still expect the original fetch error (the wrapped one) to be returned
+		assert.Equal(t, errFromGetUsers, err) // Compare wrapped errors
 		assert.Nil(t, members)
-		mockSession.AssertExpectations(t)
+		mockSession.AssertExpectations(t) // Verify ChannelMessageSend WAS called
 	})
+
+	// ... rest of file ...
 }
 
 func TestSendNoMembersMessageLogic(t *testing.T) {
