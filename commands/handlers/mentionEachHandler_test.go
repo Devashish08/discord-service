@@ -8,6 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"strings"
 	"testing"
 )
 
@@ -372,8 +373,13 @@ func TestMentionEachHandler(t *testing.T) {
 	})
 }
 
+// commands/handlers/mentionEachHandler_test.go
+
+// Inside TestExtractCommandParamsLogic
 func TestExtractCommandParamsLogic(t *testing.T) {
-	t.Run("Valid parameters", func(t *testing.T) {
+
+	// --- Tests for Valid Cases ---
+	t.Run("Valid parameters all present", func(t *testing.T) {
 		metaData := map[string]string{
 			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1",
 			"message": "Hello", "dev": "true", "dev_title": "false",
@@ -388,123 +394,178 @@ func TestExtractCommandParamsLogic(t *testing.T) {
 		assert.False(t, params.DevTitle)
 	})
 
-	t.Run("Valid parameters dev_title true", func(t *testing.T) {
+	t.Run("Valid parameters optional missing", func(t *testing.T) {
 		metaData := map[string]string{
 			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1",
-			"message": "", "dev": "false", "dev_title": "true",
+			// message, dev, dev_title missing
 		}
 		params, err := extractCommandParamsFunc(metaData)
 		assert.NoError(t, err)
-		assert.Equal(t, "role1", params.RoleID)
-		assert.False(t, params.Dev)
-		assert.True(t, params.DevTitle)
+		assert.Equal(t, "role1", params.RoleID) // Check required are still set
+		assert.Equal(t, "", params.Message)     // Defaults to ""
+		assert.False(t, params.Dev)             // Defaults to false
+		assert.False(t, params.DevTitle)        // Defaults to false
 	})
 
-	t.Run("Optional parameters missing", func(t *testing.T) {
+	// --- Tests for Message Length ---
+	t.Run("Valid parameters with long message (truncates)", func(t *testing.T) {
+		longMessage := strings.Repeat("a", MaxUserMessageLength+50)
+		truncatedSuffix := "..."
+		expectedMessage := strings.Repeat("a", MaxUserMessageLength) + truncatedSuffix
 		metaData := map[string]string{
-			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1",
+			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1", "message": longMessage,
 		}
 		params, err := extractCommandParamsFunc(metaData)
 		assert.NoError(t, err)
-		assert.Equal(t, "", params.Message)
-		assert.False(t, params.Dev, "Dev should default to false")
-		assert.False(t, params.DevTitle, "DevTitle should default to false")
+		assert.Equal(t, expectedMessage, params.Message, "Message should be truncated")
+		assert.Len(t, params.Message, MaxUserMessageLength+len(truncatedSuffix))
 	})
 
+	t.Run("Valid parameters with message within limit", func(t *testing.T) {
+		shortMessage := strings.Repeat("a", MaxUserMessageLength-10)
+		metaData := map[string]string{
+			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1", "message": shortMessage,
+		}
+		params, err := extractCommandParamsFunc(metaData)
+		assert.NoError(t, err)
+		assert.Equal(t, shortMessage, params.Message, "Message should not be truncated")
+	})
+
+	// --- Tests for Invalid Boolean Parsing ---
 	t.Run("Invalid dev parameter", func(t *testing.T) {
 		metaData := map[string]string{
 			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1", "dev": "not-a-bool",
 		}
 		params, err := extractCommandParamsFunc(metaData)
-		assert.NoError(t, err)
+		assert.NoError(t, err) // Parsing error doesn't fail the extraction overall
 		assert.False(t, params.Dev, "Dev should default to false on parse error")
 	})
 
 	t.Run("Invalid dev_title parameter", func(t *testing.T) {
 		metaData := map[string]string{
-			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1", "dev_title": "not-a-bool",
+			"role_id": "role1", "channel_id": "chan1", "guild_id": "guild1", "dev_title": "123",
 		}
 		params, err := extractCommandParamsFunc(metaData)
-		assert.NoError(t, err)
+		assert.NoError(t, err) // Parsing error doesn't fail the extraction overall
 		assert.False(t, params.DevTitle, "DevTitle should default to false on parse error")
 	})
+
+	// --- Tests for Missing/Empty Required Parameters ---
+	expectedErrorMsg := "failed to extract command params: missing or empty role_id, channel_id, or guild_id" // Define once
 
 	t.Run("Missing required parameter role_id", func(t *testing.T) {
 		metaData := map[string]string{"channel_id": "chan1", "guild_id": "guild1"}
 		_, err := extractCommandParamsFunc(metaData)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to extract command params")
+		// assert.Contains(t, err.Error(), "missing or empty role_id") // OLD
+		assert.EqualError(t, err, expectedErrorMsg) // NEW - Check exact error string
+	})
+
+	t.Run("Empty required parameter role_id", func(t *testing.T) {
+		metaData := map[string]string{"role_id": "", "channel_id": "chan1", "guild_id": "guild1"}
+		_, err := extractCommandParamsFunc(metaData)
+		assert.Error(t, err)
+		assert.EqualError(t, err, expectedErrorMsg) // NEW
 	})
 
 	t.Run("Missing required parameter channel_id", func(t *testing.T) {
 		metaData := map[string]string{"role_id": "role1", "guild_id": "guild1"}
 		_, err := extractCommandParamsFunc(metaData)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to extract command params")
+		// assert.Contains(t, err.Error(), "missing or empty channel_id") // OLD
+		assert.EqualError(t, err, expectedErrorMsg) // NEW
+	})
+
+	t.Run("Empty required parameter channel_id", func(t *testing.T) {
+		metaData := map[string]string{"role_id": "role1", "channel_id": "", "guild_id": "guild1"}
+		_, err := extractCommandParamsFunc(metaData)
+		assert.Error(t, err)
+		// assert.Contains(t, err.Error(), "missing or empty channel_id") // OLD
+		assert.EqualError(t, err, expectedErrorMsg) // NEW
 	})
 
 	t.Run("Missing required parameter guild_id", func(t *testing.T) {
 		metaData := map[string]string{"role_id": "role1", "channel_id": "chan1"}
 		_, err := extractCommandParamsFunc(metaData)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to extract command params")
+		// assert.Contains(t, err.Error(), "missing or empty guild_id") // OLD
+		assert.EqualError(t, err, expectedErrorMsg) // NEW
+	})
+
+	t.Run("Empty required parameter guild_id", func(t *testing.T) {
+		metaData := map[string]string{"role_id": "role1", "channel_id": "chan1", "guild_id": ""}
+		_, err := extractCommandParamsFunc(metaData)
+		assert.Error(t, err)
+		// assert.Contains(t, err.Error(), "missing or empty guild_id") // OLD
+		assert.EqualError(t, err, expectedErrorMsg) // NEW
 	})
 }
 
+// commands/handlers/mentionEachHandler_test.go
+
+// --- Test logic of fetchMembersWithRoleFunc ---
 func TestFetchMembersWithRoleLogic(t *testing.T) {
+	// --- Test Data ---
 	guildID := "g1"
 	roleID := "r1"
 	channelID := "c1"
 	member1 := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID}}
 	member2 := &discordgo.Member{User: &discordgo.User{ID: "u2"}, Roles: []string{"other"}}
-	membersListInput := []*discordgo.Member{member1, member2}
-	expectedOutput := []*discordgo.Member{member1}
+	membersListInputSuccess := []*discordgo.Member{member1, member2} // Input for success case mock
+	expectedOutputSuccess := []*discordgo.Member{member1}            // Expected result after filtering
+	mockErr := errors.New("API error from GuildMembers")             // Error returned BY GuildMembers mock
 	var emptyMemberList []*discordgo.Member
 
 	t.Run("Success - Members found", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-		// --- Mock the underlying session call ---
-		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersListInput, nil).Once()
 
-		// Act: Call the REAL fetchMembersWithRoleFunc
+		// --- Mock Expectations for session calls ---
+		// 1. Expect first call to GuildMembers (via utils.GetUsersWithRole)
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersListInputSuccess, nil).Once()
+		// 2. Expect second call after processing page 1 (last ID "u2") -> return empty
+		mockSession.On("GuildMembers", guildID, member2.User.ID, 1000).Return(emptyMemberList, nil).Once()
+		// --- End Mock Expectations ---
+
+		// Act: Call the REAL fetchMembersWithRoleFunc variable
 		members, err := fetchMembersWithRoleFunc(mockSession, guildID, roleID, channelID)
 
 		// Assert
 		assert.NoError(t, err)
-		assert.Equal(t, expectedOutput, members)
-		mockSession.AssertExpectations(t)
+		assert.Equal(t, expectedOutputSuccess, members) // Check filtering result
+		mockSession.AssertExpectations(t)               // Verify both GuildMembers calls happened
+		// ChannelMessageSend should NOT be called on success path
 		mockSession.AssertNotCalled(t, "ChannelMessageSend", mock.Anything, mock.Anything)
 	})
 
 	t.Run("Success - No members with role found", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-		mockSession.On("GuildMembers", guildID, "", 1000).Return([]*discordgo.Member{member2}, nil).Once()
+		membersInputNoMatch := []*discordgo.Member{member2} // Input has no matching role
 
+		// --- Mock Expectations ---
+		// 1. Expect first call
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersInputNoMatch, nil).Once()
+		// 2. Expect second call after processing page 1 (last ID "u2") -> return empty
+		mockSession.On("GuildMembers", guildID, member2.User.ID, 1000).Return(emptyMemberList, nil).Once()
+		// --- End Mock Expectations ---
+
+		// Act
 		members, err := fetchMembersWithRoleFunc(mockSession, guildID, roleID, channelID)
 
+		// Assert
 		assert.NoError(t, err)
-		assert.Equal(t, emptyMemberList, members)
-		mockSession.AssertExpectations(t)
+		assert.Empty(t, members)          // Result should be empty after filtering
+		mockSession.AssertExpectations(t) // Verify both GuildMembers calls happened
 		mockSession.AssertNotCalled(t, "ChannelMessageSend", mock.Anything, mock.Anything)
 	})
 
-	// commands/handlers/mentionEachHandler_test.go
-
-	// Inside TestFetchMembersWithRoleLogic
 	t.Run("Error - GuildMembers fails, sending error message succeeds", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
+
 		// --- Mock the underlying session call to fail ---
-		originalError := errors.New("API error from GuildMembers")
-		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, originalError).Once()
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, mockErr).Once() // Simulate GuildMembers failing
 
-		// --- Construct the EXACT error message string the code will generate ---
-		// 1. Simulate the error returned by utils.GetUsersWithRole
-		errFromGetUsers := fmt.Errorf("failed to fetch guild members chunk: %w", originalError)
-		// 2. Construct the message string using THAT error
-		expectedErrorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, errFromGetUsers)
-		// --- End Construction ---
-
-		// --- Expect the EXACT error message string ---
+		// --- Expect ChannelMessageSend to be called DIRECTLY by fetchMembersWithRoleFunc ---
+		expectedErrorMsg := fmt.Sprintf("Sorry, I couldn't fetch members for role <@&%s> right now. Please try again later.", roleID)
 		mockSession.On("ChannelMessageSend", channelID, expectedErrorMsg).Return(&discordgo.Message{}, nil).Once()
 		// --- End Expect ---
 
@@ -513,26 +574,22 @@ func TestFetchMembersWithRoleLogic(t *testing.T) {
 
 		// Assert
 		assert.Error(t, err)
-		// Check the error returned by fetchMembersWithRoleFunc IS the wrapped error from GetUsersWithRole
-		assert.Equal(t, errFromGetUsers, err) // Use Equal here to compare the wrapped errors directly
+		// The error returned by fetchMembersWithRoleFunc is the wrapped one from utils.GetUsersWithRole
+		assert.ErrorContains(t, err, "failed to fetch guild members chunk:")
+		assert.ErrorContains(t, err, mockErr.Error())
 		assert.Nil(t, members)
-		mockSession.AssertExpectations(t) // Verify ChannelMessageSend WAS called
+		mockSession.AssertExpectations(t) // Verify BOTH GuildMembers and ChannelMessageSend were called
 	})
 
 	t.Run("Error - GuildMembers fails, sending error message fails", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
 		sendErr := errors.New("send failed")
-		originalError := errors.New("API error from GuildMembers")
 
 		// --- Mock the underlying session call to fail ---
-		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, originalError).Once()
+		mockSession.On("GuildMembers", guildID, "", 1000).Return(nil, mockErr).Once() // Simulate GuildMembers failing
 
-		// --- Construct the EXACT error message string the code will generate ---
-		errFromGetUsers := fmt.Errorf("failed to fetch guild members chunk: %w", originalError)
-		expectedErrorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, errFromGetUsers)
-		// --- End Construction ---
-
-		// --- Expect the EXACT error message string, but mock its return to fail ---
+		// --- Expect ChannelMessageSend call, but mock its return to fail ---
+		expectedErrorMsg := fmt.Sprintf("Sorry, I couldn't fetch members for role <@&%s> right now. Please try again later.", roleID)
 		mockSession.On("ChannelMessageSend", channelID, expectedErrorMsg).Return(nil, sendErr).Once()
 		// --- End Expect ---
 
@@ -541,14 +598,15 @@ func TestFetchMembersWithRoleLogic(t *testing.T) {
 
 		// Assert
 		assert.Error(t, err)
-		// Still expect the original fetch error (the wrapped one) to be returned
-		assert.Equal(t, errFromGetUsers, err) // Compare wrapped errors
+		// Still expect the original fetch error (the wrapped one from GetUsersWithRole) to be returned
+		assert.ErrorContains(t, err, "failed to fetch guild members chunk:")
+		assert.ErrorContains(t, err, mockErr.Error())
 		assert.Nil(t, members)
-		mockSession.AssertExpectations(t) // Verify ChannelMessageSend WAS called
+		mockSession.AssertExpectations(t) // Verify BOTH GuildMembers and ChannelMessageSend were called
 	})
-
-	// ... rest of file ...
 }
+
+// ... rest of file ...
 
 func TestSendNoMembersMessageLogic(t *testing.T) {
 	channelID := "c1"

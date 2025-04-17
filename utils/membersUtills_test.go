@@ -53,27 +53,52 @@ func TestGetUsersWithRole(t *testing.T) {
 	var memberNil *discordgo.Member = nil
 	var emptyMemberList []*discordgo.Member
 
+	// utils/members_utils_test.go
+
+	// Inside TestGetUsersWithRole
 	t.Run("returns single user with matching role", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-		membersInput := []*discordgo.Member{member1, member2}
+		membersInput := []*discordgo.Member{member1, member2} // member1.ID="123", member2.ID="456"
+		var emptyMemberList []*discordgo.Member
+
+		// --- Mock Expectations ---
+		// 1. Expect the first call
 		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersInput, nil).Once()
+		// 2. Expect the second call (after processing page 1) with after=ID of last member ("456")
+		//    Mock it to return an empty list to terminate the loop.
+		mockSession.On("GuildMembers", guildID, member2.User.ID, 1000).Return(emptyMemberList, nil).Once()
+		// --- End Mock Expectations ---
 
 		result, err := GetUsersWithRole(mockSession, guildID, roleID)
+
 		assert.NoError(t, err)
-		assert.Len(t, result, 1)
-		assert.Equal(t, "123", result[0].User.ID)
-		mockSession.AssertExpectations(t)
+		assert.Len(t, result, 1) // Still expect only member1 to be filtered in
+		if len(result) > 0 {
+			assert.Equal(t, "123", result[0].User.ID)
+		}
+		mockSession.AssertExpectations(t) // Verify *both* calls were made
 	})
+
+	// ... rest of tests ...
 
 	t.Run("returns multiple users with matching role", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-		membersInput := []*discordgo.Member{member1, member2, member3}
+		membersInput := []*discordgo.Member{member1, member2, member3} // IDs: "123", "456", "789"
+		var emptyMemberList []*discordgo.Member
+
+		// --- Mock Expectations ---
+		// 1. Expect the first call
 		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersInput, nil).Once()
+		// 2. Expect the second call with after=ID of last member ("789")
+		//    Mock it to return an empty list to terminate the loop.
+		mockSession.On("GuildMembers", guildID, member3.User.ID, 1000).Return(emptyMemberList, nil).Once()
+		// --- End Mock Expectations ---
 
 		result, err := GetUsersWithRole(mockSession, guildID, roleID)
 
 		assert.NoError(t, err)
-		assert.Len(t, result, 2)
+		assert.Len(t, result, 2) // Expect 2 members (member1, member3)
+		// Use ElementsMatch for concise checking of slice contents regardless of order
 		expectedIDs := []string{"123", "789"}
 		var actualIDs []string
 		for _, m := range result {
@@ -82,7 +107,8 @@ func TestGetUsersWithRole(t *testing.T) {
 			}
 		}
 		assert.ElementsMatch(t, expectedIDs, actualIDs, "Should find members 123 and 789 only")
-		mockSession.AssertExpectations(t)
+
+		mockSession.AssertExpectations(t) // Verify *both* calls were made
 	})
 
 	t.Run("handles error from GuildMembers", func(t *testing.T) {
@@ -97,17 +123,30 @@ func TestGetUsersWithRole(t *testing.T) {
 		mockSession.AssertExpectations(t)
 	})
 
+	// utils/members_utils_test.go
+
+	// Inside TestGetUsersWithRole
 	t.Run("returns empty slice when no users have the role", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-		membersInput := []*discordgo.Member{member2}
+		membersInput := []*discordgo.Member{member2} // Contains only member2 (ID "456", no target role)
+		var emptyMemberList []*discordgo.Member
+
+		// --- Mock Expectations ---
+		// 1. Expect the first call
 		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersInput, nil).Once()
+		// 2. Expect the second call with after=ID of last member ("456")
+		//    Mock it to return an empty list to terminate the loop.
+		mockSession.On("GuildMembers", guildID, member2.User.ID, 1000).Return(emptyMemberList, nil).Once()
+		// --- End Mock Expectations ---
 
 		result, err := GetUsersWithRole(mockSession, guildID, roleID)
 
 		assert.NoError(t, err)
-		assert.Empty(t, result)
-		mockSession.AssertExpectations(t)
+		assert.Empty(t, result)           // The final result should still be empty
+		mockSession.AssertExpectations(t) // Verify *both* calls were made
 	})
+
+	// ... rest of tests ...
 
 	t.Run("handles empty member list from GuildMembers", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
@@ -120,11 +159,19 @@ func TestGetUsersWithRole(t *testing.T) {
 
 	t.Run("skips members with nil User or nil Roles safely", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
-		membersInput := []*discordgo.Member{member1, memberNilUser, memberNilRoles, memberNil, member3}
+		membersInput := []*discordgo.Member{member1, memberNilUser, memberNilRoles, memberNil, member3} // Last ID is "789"
+		var emptyMemberList []*discordgo.Member
+
+		// --- Mock Expectations for this test too ---
+		// 1. Expect first call
 		mockSession.On("GuildMembers", guildID, "", 1000).Return(membersInput, nil).Once()
+		// 2. Expect second call with after = ID of last valid member ("789")
+		mockSession.On("GuildMembers", guildID, member3.User.ID, 1000).Return(emptyMemberList, nil).Once()
+
 		result, err := GetUsersWithRole(mockSession, guildID, roleID)
+
 		assert.NoError(t, err)
-		assert.Len(t, result, 2)
+		assert.Len(t, result, 2) // Should only find member1 and member3
 		expectedIDs := []string{"123", "789"}
 		var actualIDs []string
 		for _, m := range result {
@@ -133,8 +180,68 @@ func TestGetUsersWithRole(t *testing.T) {
 			}
 		}
 		assert.ElementsMatch(t, expectedIDs, actualIDs)
+		mockSession.AssertExpectations(t) // Verify *both* calls were made
+	})
+	// utils/members_utils_test.go
+
+	// Inside TestGetUsersWithRole
+	// Verifies that the function correctly handles pagination by making multiple
+	// calls to GuildMembers with the appropriate 'after' ID until an empty chunk
+	// is returned, accumulating members with the target role across pages.
+	t.Run("handles pagination correctly", func(t *testing.T) {
+		// --- Arrange ---
+		mockSession := new(MockDiscordSession)
+		// Use distinct IDs for clarity, ensure roleID exists in test data
+		guildID := "paginationGuild"
+		roleID := "pageRole"
+		limit := 1000 // Match the limit used in the function
+
+		// Define members for the first page (fewer than limit to test loop continuation)
+		memberP1R1 := &discordgo.Member{User: &discordgo.User{ID: "p1u1"}, Roles: []string{roleID}}
+		memberP1Other := &discordgo.Member{User: &discordgo.User{ID: "p1u2"}, Roles: []string{"other"}}
+		memberP1R2 := &discordgo.Member{User: &discordgo.User{ID: "p1u3"}, Roles: []string{roleID, "another"}} // Last member of page 1
+		membersPage1 := []*discordgo.Member{memberP1R1, memberP1Other, memberP1R2}
+
+		// Define members for the second page
+		memberP2R1 := &discordgo.Member{User: &discordgo.User{ID: "p2u1"}, Roles: []string{roleID}}
+		memberP2R2 := &discordgo.Member{User: &discordgo.User{ID: "p2u2"}, Roles: []string{roleID}} // Last member of page 2
+		membersPage2 := []*discordgo.Member{memberP2R1, memberP2R2}
+
+		// Define an empty list for the final API call
+		var emptyMemberList []*discordgo.Member
+
+		// --- Mock Expectations ---
+		// 1. Expect first call with after="" -> returns page 1 members
+		mockSession.On("GuildMembers", guildID, "", limit).Return(membersPage1, nil).Once()
+		// 2. Expect second call with after="p1u3" (last ID from page 1) -> returns page 2 members
+		mockSession.On("GuildMembers", guildID, memberP1R2.User.ID, limit).Return(membersPage2, nil).Once()
+		// 3. Expect third call with after="p2u2" (last ID from page 2) -> returns empty list to stop loop
+		mockSession.On("GuildMembers", guildID, memberP2R2.User.ID, limit).Return(emptyMemberList, nil).Once()
+
+		// --- Act ---
+		result, err := GetUsersWithRole(mockSession, guildID, roleID)
+
+		// --- Assert ---
+		assert.NoError(t, err)
+		// Expect 4 members total (p1u1, p1u3 from page 1; p2u1, p2u2 from page 2)
+		assert.Len(t, result, 4)
+
+		// Verify the correct members were collected using ElementsMatch (ignores order)
+		expectedIDs := []string{"p1u1", "p1u3", "p2u1", "p2u2"}
+		var actualIDs []string
+		for _, m := range result {
+			if m != nil && m.User != nil { // Safety check
+				actualIDs = append(actualIDs, m.User.ID)
+			}
+		}
+		assert.ElementsMatch(t, expectedIDs, actualIDs)
+
+		// Verify that all expected mock calls were made
 		mockSession.AssertExpectations(t)
 	})
+
+	// ... rest of tests ...
+
 }
 
 // TestFormatUserMentions tests the utility function for converting member objects

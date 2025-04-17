@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	BatchSize  = 5
-	BatchDelay = 1 * time.Second
+	BatchSize            = 5
+	BatchDelay           = 1 * time.Second
+	MaxUserMessageLength = 1000
 )
 
 type CommandParams struct {
@@ -50,42 +51,66 @@ var _ utils.DiscordSessionInterface = (*DiscordSessionWrapper)(nil)
 
 var (
 	extractCommandParamsFunc = func(metaData map[string]string) (CommandParams, error) {
-		params := CommandParams{
-			RoleID:    metaData["role_id"],
-			ChannelID: metaData["channel_id"],
-			GuildID:   metaData["guild_id"],
-			Message:   metaData["message"],
-		}
+		params := CommandParams{} // Initialize empty
 
-		if params.RoleID == "" || params.ChannelID == "" || params.GuildID == "" {
+		// --- Step 1: Validate required params early ---
+		roleID, roleOK := metaData["role_id"]
+		channelID, channelOK := metaData["channel_id"]
+		guildID, guildOK := metaData["guild_id"]
+
+		if !roleOK || roleID == "" || !channelOK || channelID == "" || !guildOK || guildID == "" {
 			logrus.WithFields(logrus.Fields{
-				"role_id":    params.RoleID,
-				"channel_id": params.ChannelID,
-				"guild_id":   params.GuildID,
-				"metadata":   metaData,
-			}).Error("Missing required parameters for mention-each command")
-			return params, fmt.Errorf("failed to extract command params: missing role_id, channel_id, or guild_id")
+				"role_id_present":    roleOK,
+				"channel_id_present": channelOK,
+				"guild_id_present":   guildOK,
+				"role_id_value":      metaData["role_id"], // Log what was actually present
+				"channel_id_value":   metaData["channel_id"],
+				"guild_id_value":     metaData["guild_id"],
+				"metadata":           metaData,
+			}).Error("Missing or empty required parameters (role_id, channel_id, guild_id) in metadata")
+			// Return empty params and error
+			return params, fmt.Errorf("failed to extract command params: missing or empty role_id, channel_id, or guild_id")
 		}
+		// --- End required param validation ---
 
+		// Assign validated required params
+		params.RoleID = roleID
+		params.ChannelID = channelID
+		params.GuildID = guildID
+
+		// --- Step 2: Get, Validate Length, and Assign Optional Message ---
+		userMessage := metaData["message"] // Get message (defaults to "" if key missing)
+		if len(userMessage) > MaxUserMessageLength {
+			truncatedSuffix := "..."
+			logrus.Warnf("User provided message length (%d) exceeds limit (%d). Truncating.", len(userMessage), MaxUserMessageLength)
+			// Truncate the message and add ellipsis
+			userMessage = userMessage[:MaxUserMessageLength] + truncatedSuffix
+		}
+		params.Message = userMessage // Assign potentially truncated message
+		// --- End Message Handling ---
+
+		// --- Step 3: Boolean flag parsing ---
 		if devStr := metaData["dev"]; devStr != "" {
 			dev, err := strconv.ParseBool(devStr)
 			if err == nil {
 				params.Dev = dev
 			} else {
-				logrus.Warnf("Invalid boolean value for 'dev' flag: '%s' Defaulting to false.", devStr)
+				logrus.Warnf("Invalid boolean value for 'dev' flag: '%s'. Defaulting to false.", devStr)
+				// params.Dev remains false (default)
 			}
 		}
-
 		if devTitleStr := metaData["dev_title"]; devTitleStr != "" {
 			devTitle, err := strconv.ParseBool(devTitleStr)
 			if err == nil {
 				params.DevTitle = devTitle
 			} else {
-				logrus.Warnf("Invalid boolean value for 'dev-title' flag: '%s' Defaulting to false.", devTitleStr)
+				logrus.Warnf("Invalid boolean value for 'dev_title' flag: '%s'. Defaulting to false.", devTitleStr)
+				// params.DevTitle remains false (default)
 			}
 		}
+		// --- End Boolean Flag Parsing ---
 
-		return params, nil
+		return params, nil // Return populated params
 	}
 
 	fetchMembersWithRoleFunc = func(session utils.DiscordSessionInterface, guildID, roleID, channelID string) ([]*discordgo.Member, error) {
@@ -96,7 +121,7 @@ var (
 				"role_id":    roleID,
 				"channel_id": channelID,
 			}).Errorf("GetUserWithRole failed within fetchMembersWithRole: %v", err)
-			errorMsg := fmt.Sprintf("Failed to fetch members with role: <@&%s>. Error: %v", roleID, err)
+			errorMsg := fmt.Sprintf("Sorry, I couldn't fetch members for role <@&%s> right now. Please try again later.", roleID)
 			_, sendErr := session.ChannelMessageSend(channelID, errorMsg)
 			if sendErr != nil {
 				logrus.WithFields(logrus.Fields{
