@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/Real-Dev-Squad/discord-service/config"
 	"github.com/Real-Dev-Squad/discord-service/dtos"
 	"github.com/Real-Dev-Squad/discord-service/queue"
 	"github.com/Real-Dev-Squad/discord-service/utils"
@@ -11,6 +12,11 @@ import (
 )
 
 func (s *CommandService) MentionEachService(response http.ResponseWriter, request *http.Request) {
+	if !config.AppConfig.MENTION_EACH_ENABLED {
+		logrus.Warn("Mention-each command accessed but is disabled by feature flag.")
+		sendErrorResponse(response, "Sorry, the mention-each command is currently disabled.")
+		return
+	}
 	logrus.Info("Mention-each command received")
 
 	if s.discordMessage == nil || s.discordMessage.Data == nil ||
