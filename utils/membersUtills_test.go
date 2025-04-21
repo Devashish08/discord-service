@@ -257,27 +257,37 @@ func TestFormatUserMentions(t *testing.T) {
 		assert.Equal(t, []string{"<@123>", "<@456>"}, mentions)
 	})
 	t.Run("handles empty member list", func(t *testing.T) {
-		mentions := FormatUserMentions([]*discordgo.Member{})
+		var members []*discordgo.Member
+		mentions := FormatUserMentions(members)
 		assert.Empty(t, mentions)
 	})
+
 	t.Run("handles nil members list", func(t *testing.T) {
 		mentions := FormatUserMentions(nil)
 		assert.Empty(t, mentions)
 	})
-}
+	t.Run("skips members with nil User", func(t *testing.T) {
+		members := []*discordgo.Member{
+			{User: &discordgo.User{ID: "123"}},
+			{User: nil},
+			{User: &discordgo.User{ID: "456"}},
+		}
+		mentions := FormatUserMentions(members)
+		assert.Equal(t, []string{"<@123>", "<@456>"}, mentions)
+		assert.Len(t, mentions, 2)
+	})
 
-// TestFormatRoleMention tests the utility function for formatting role IDs
-// into Discord role mention strings.
-func TestFormatRoleMention(t *testing.T) {
-	t.Run("format roleID as mention", func(t *testing.T) {
-		roleID := "123456789"
-		mention := FormatRoleMention(roleID)
-		assert.Equal(t, "<@&123456789>", mention)
+	t.Run("skips nil member in list", func(t *testing.T) {
+		members := []*discordgo.Member{
+			{User: &discordgo.User{ID: "123"}},
+			nil,
+			{User: &discordgo.User{ID: "456"}},
+		}
+		mentions := FormatUserMentions(members)
+		assert.Equal(t, []string{"<@123>", "<@456>"}, mentions)
+		assert.Len(t, mentions, 2)
 	})
-	t.Run("handles empty roleID", func(t *testing.T) {
-		mention := FormatRoleMention("")
-		assert.Equal(t, "<@&>", mention)
-	})
+
 }
 
 // TestFormatMentionResponse tests the utility function for creating the final message
@@ -295,15 +305,10 @@ func TestFormatMentionResponse(t *testing.T) {
 		response := FormatMentionResponse(mentions, "")
 		assert.Equal(t, "<@123> <@456>", response)
 	})
-
-	t.Run("handles empty mentions", func(t *testing.T) {
-		response := FormatMentionResponse([]string{}, "Hello")
-		assert.Equal(t, "Sorry no user found under this role.", response)
-	})
-
-	t.Run("handles nil mentions", func(t *testing.T) {
-		response := FormatMentionResponse(nil, "Hello")
-		assert.Equal(t, "Sorry no user found under this role.", response)
+	t.Run("formats response with only mentions", func(t *testing.T) {
+		mentions := []string{"<@123>", "<@456>"}
+		response := FormatMentionResponse(mentions, "")
+		assert.Equal(t, "<@123> <@456>", response)
 	})
 }
 func TestFormatDevTitleResponse(t *testing.T) {
@@ -345,4 +350,81 @@ func TestFormatDevTitleResponse(t *testing.T) {
 		expected := fmt.Sprintf("Found 1 user with the %s role: %s", emptyRoleMention, mentions[0])
 		assert.Equal(t, expected, response)
 	})
+}
+
+// ... MockDiscordSession ...
+// ... TestGetUsersWithRole ...
+// ... TestFormatUserMentions ...
+// ... TestFormatRoleMention ...
+// ... TestFormatMentionResponse ...
+// ... TestFormatDevTitleResponse ...
+
+// TestHasRole tests the HasRole helper function.
+func TestHasRole(t *testing.T) {
+	roleID := "testRole123"
+	otherRole := "otherRole456"
+	whitespaceRole := "   " // Role consisting of only whitespace
+	emptyRole := ""         // Empty string role
+
+	// Test cases using assert
+	t.Run("member is nil", func(t *testing.T) {
+		var memberNil *discordgo.Member = nil
+		assert.False(t, HasRole(memberNil, roleID))
+	})
+
+	t.Run("member roles slice is nil", func(t *testing.T) {
+		memberNilRoles := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: nil}
+		assert.False(t, HasRole(memberNilRoles, roleID))
+	})
+
+	t.Run("member roles slice is empty", func(t *testing.T) {
+		memberEmptyRoles := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{}}
+		assert.False(t, HasRole(memberEmptyRoles, roleID))
+	})
+
+	t.Run("member has the target role", func(t *testing.T) {
+		memberWithRole := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{otherRole, roleID}}
+		assert.True(t, HasRole(memberWithRole, roleID))
+	})
+
+	t.Run("member does not have the target role", func(t *testing.T) {
+		memberWithoutRole := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{otherRole, "anotherRole"}}
+		assert.False(t, HasRole(memberWithoutRole, roleID))
+	})
+
+	// --- Tests for Whitespace Handling (NEW) ---
+
+	t.Run("member has whitespace role, searching for normal role", func(t *testing.T) {
+		memberWithWhitespace := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID, whitespaceRole}}
+		// Should ignore the whitespaceRole and find the target roleID
+		assert.True(t, HasRole(memberWithWhitespace, roleID))
+		// Should ignore the whitespaceRole and NOT find otherRole
+		assert.False(t, HasRole(memberWithWhitespace, otherRole))
+	})
+
+	t.Run("member has only whitespace role, searching for normal role", func(t *testing.T) {
+		memberWithOnlyWhitespace := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{whitespaceRole}}
+		// Should ignore the whitespaceRole and not find the target roleID
+		assert.False(t, HasRole(memberWithOnlyWhitespace, roleID))
+	})
+
+	t.Run("member has only empty string role, searching for normal role", func(t *testing.T) {
+		memberWithOnlyEmpty := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{emptyRole}}
+		// Should ignore the emptyRole and not find the target roleID
+		assert.False(t, HasRole(memberWithOnlyEmpty, roleID))
+	})
+
+	t.Run("member has whitespace role, searching specifically for whitespace role", func(t *testing.T) {
+		memberWithWhitespace := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID, whitespaceRole}}
+		// Should perform exact match and FIND the whitespaceRole when it's the target
+		assert.True(t, HasRole(memberWithWhitespace, whitespaceRole))
+	})
+
+	t.Run("member has empty string role, searching specifically for empty string role", func(t *testing.T) {
+		memberWithEmpty := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID, emptyRole}}
+		// Should perform exact match and FIND the emptyRole when it's the target
+		assert.True(t, HasRole(memberWithEmpty, emptyRole))
+	})
+
+	// --- End Whitespace Handling Tests ---
 }

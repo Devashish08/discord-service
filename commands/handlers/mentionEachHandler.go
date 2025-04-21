@@ -238,6 +238,21 @@ var (
 		return nil
 	}
 	handleStandardModeFunc = func(session utils.DiscordSessionInterface, mentions []string, params CommandParams) error {
+
+		if len(mentions) == 0 {
+			logrus.Warnf("handleStandardModeFunc called with zero mentions for role %s. Sending 'no user' message.", params.RoleID)
+			noUserMessage := "Sorry no user found under this role."
+			_, err := session.ChannelMessageSend(params.ChannelID, noUserMessage)
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"channelID": params.ChannelID,
+					"roleID":    params.RoleID,
+					"error":     err,
+				}).Error("Failed to send 'no user found' message from handleStandardModeFunc")
+				return err
+			}
+			return nil
+		}
 		response := utils.FormatMentionResponse(mentions, params.Message)
 		logrus.WithFields(logrus.Fields{
 			"channelID": params.ChannelID,
