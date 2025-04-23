@@ -2,9 +2,10 @@ package utils
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
-	"strings"
 )
 
 func GetUsersWithRole(session DiscordSessionInterface, guildID string, roleID string) ([]*discordgo.Member, error) {
@@ -35,9 +36,14 @@ func GetUsersWithRole(session DiscordSessionInterface, guildID string, roleID st
 				logrus.Warnf("Guild %s: Member object or User data is nil, skipping member: %+v", guildID, member)
 				continue
 			}
-			if HasRole(member, roleID) {
-				membersWithRole = append(membersWithRole, member)
-				foundInChunk++
+			if member.Roles != nil {
+				for _, r := range member.Roles {
+					if r == roleID {
+						membersWithRole = append(membersWithRole, member)
+						foundInChunk++
+						break
+					}
+				}
 			}
 			lastIdInChunk = member.User.ID
 		}
@@ -47,24 +53,6 @@ func GetUsersWithRole(session DiscordSessionInterface, guildID string, roleID st
 
 	logrus.Infof("Finished fetching. Found %d total members with role %s in guild %s", len(membersWithRole), roleID, guildID)
 	return membersWithRole, nil
-}
-
-func HasRole(member *discordgo.Member, roleID string) bool {
-	if member == nil || member.Roles == nil {
-		return false
-	}
-
-	for _, r := range member.Roles {
-		trimmedRoleFromSlice := strings.TrimSpace(r)
-		if trimmedRoleFromSlice == "" && strings.TrimSpace(roleID) != "" {
-			continue
-		}
-		if r == roleID {
-			return true
-		}
-	}
-
-	return false
 }
 
 func FormatUserMentions(members []*discordgo.Member) []string {
@@ -92,7 +80,7 @@ func FormatMentionResponse(mentions []string, message string) string {
 
 }
 
-func FormatDevTitleResponse(mentions []string, roleID string) string {
+func FormatUserListResponse(mentions []string, roleID string) string {
 	count := len(mentions)
 	roleMention := fmt.Sprintf("<@&%s>", roleID)
 

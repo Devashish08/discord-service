@@ -217,7 +217,7 @@ var (
 	}
 
 	handleDevTitleModeFunc = func(session utils.DiscordSessionInterface, mentions []string, params CommandParams) error {
-		response := utils.FormatDevTitleResponse(mentions, params.RoleID)
+		response := utils.FormatUserListResponse(mentions, params.RoleID)
 		logrus.WithFields(logrus.Fields{
 			"channelID":          params.ChannelID,
 			"roleID":             params.RoleID,

@@ -703,11 +703,11 @@ func TestHandleDevModeLogic(t *testing.T) {
 
 }
 
-func TestHandleDevTitleModeLogic(t *testing.T) {
+func TestHandleUserListModeLogic(t *testing.T) {
 	mockErr := errors.New("send failed")
 	params := CommandParams{ChannelID: "c1", RoleID: "r1"}
 	mentions := []string{"<@u1>", "<@u2>"}
-	expectedResponse := utils.FormatDevTitleResponse(mentions, params.RoleID)
+	expectedResponse := utils.FormatUserListResponse(mentions, params.RoleID)
 
 	t.Run("Success sending message", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)

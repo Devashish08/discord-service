@@ -157,7 +157,7 @@ func TestGetUsersWithRole(t *testing.T) {
 		mockSession.AssertExpectations(t)
 	})
 
-	t.Run("skips members with nil User or nil Roles safely", func(t *testing.T) {
+	t.Run("ignores invalid member data during filtering", func(t *testing.T) {
 		mockSession := new(MockDiscordSession)
 		membersInput := []*discordgo.Member{member1, memberNilUser, memberNilRoles, memberNil, member3} // Last ID is "789"
 		var emptyMemberList []*discordgo.Member
@@ -311,19 +311,19 @@ func TestFormatMentionResponse(t *testing.T) {
 		assert.Equal(t, "<@123> <@456>", response)
 	})
 }
-func TestFormatDevTitleResponse(t *testing.T) {
+func TestFormatUserListResponse(t *testing.T) {
 	roleID := "123456789"
 	roleMention := "<@&" + roleID + ">"
 
 	t.Run("formats response with no users", func(t *testing.T) {
-		response := FormatDevTitleResponse([]string{}, roleID)
+		response := FormatUserListResponse([]string{}, roleID)
 		expected := fmt.Sprintf("Found 0 users with the %s role", roleMention)
 		assert.Equal(t, expected, response)
 	})
 
 	t.Run("formats response with single user", func(t *testing.T) {
 		mentions := []string{"<@123>"}
-		response := FormatDevTitleResponse(mentions, roleID)
+		response := FormatUserListResponse(mentions, roleID)
 		expected := fmt.Sprintf("Found 1 user with the %s role: %s", roleMention, mentions[0])
 		assert.Equal(t, expected, response)
 	})
@@ -332,13 +332,13 @@ func TestFormatDevTitleResponse(t *testing.T) {
 		roleID := "123456789"
 		roleMention := "<@&" + roleID + ">"
 		mentions := []string{"<@123>", "<@456>"}
-		response := FormatDevTitleResponse(mentions, roleID)
+		response := FormatUserListResponse(mentions, roleID)
 		expected := fmt.Sprintf("Found %d users with the %s role: %s", len(mentions), roleMention, strings.Join(mentions, ", "))
 		assert.Equal(t, expected, response)
 	})
 
 	t.Run("handles nil mentions", func(t *testing.T) {
-		response := FormatDevTitleResponse(nil, roleID)
+		response := FormatUserListResponse(nil, roleID)
 		expected := fmt.Sprintf("Found 0 users with the %s role", roleMention)
 		assert.Equal(t, expected, response)
 	})
@@ -346,85 +346,8 @@ func TestFormatDevTitleResponse(t *testing.T) {
 	t.Run("handles empty role ID", func(t *testing.T) {
 		mentions := []string{"<@123>"}
 		emptyRoleMention := "<@&>"
-		response := FormatDevTitleResponse([]string{"<@123>"}, "")
+		response := FormatUserListResponse([]string{"<@123>"}, "")
 		expected := fmt.Sprintf("Found 1 user with the %s role: %s", emptyRoleMention, mentions[0])
 		assert.Equal(t, expected, response)
 	})
-}
-
-// ... MockDiscordSession ...
-// ... TestGetUsersWithRole ...
-// ... TestFormatUserMentions ...
-// ... TestFormatRoleMention ...
-// ... TestFormatMentionResponse ...
-// ... TestFormatDevTitleResponse ...
-
-// TestHasRole tests the HasRole helper function.
-func TestHasRole(t *testing.T) {
-	roleID := "testRole123"
-	otherRole := "otherRole456"
-	whitespaceRole := "   " // Role consisting of only whitespace
-	emptyRole := ""         // Empty string role
-
-	// Test cases using assert
-	t.Run("member is nil", func(t *testing.T) {
-		var memberNil *discordgo.Member = nil
-		assert.False(t, HasRole(memberNil, roleID))
-	})
-
-	t.Run("member roles slice is nil", func(t *testing.T) {
-		memberNilRoles := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: nil}
-		assert.False(t, HasRole(memberNilRoles, roleID))
-	})
-
-	t.Run("member roles slice is empty", func(t *testing.T) {
-		memberEmptyRoles := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{}}
-		assert.False(t, HasRole(memberEmptyRoles, roleID))
-	})
-
-	t.Run("member has the target role", func(t *testing.T) {
-		memberWithRole := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{otherRole, roleID}}
-		assert.True(t, HasRole(memberWithRole, roleID))
-	})
-
-	t.Run("member does not have the target role", func(t *testing.T) {
-		memberWithoutRole := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{otherRole, "anotherRole"}}
-		assert.False(t, HasRole(memberWithoutRole, roleID))
-	})
-
-	// --- Tests for Whitespace Handling (NEW) ---
-
-	t.Run("member has whitespace role, searching for normal role", func(t *testing.T) {
-		memberWithWhitespace := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID, whitespaceRole}}
-		// Should ignore the whitespaceRole and find the target roleID
-		assert.True(t, HasRole(memberWithWhitespace, roleID))
-		// Should ignore the whitespaceRole and NOT find otherRole
-		assert.False(t, HasRole(memberWithWhitespace, otherRole))
-	})
-
-	t.Run("member has only whitespace role, searching for normal role", func(t *testing.T) {
-		memberWithOnlyWhitespace := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{whitespaceRole}}
-		// Should ignore the whitespaceRole and not find the target roleID
-		assert.False(t, HasRole(memberWithOnlyWhitespace, roleID))
-	})
-
-	t.Run("member has only empty string role, searching for normal role", func(t *testing.T) {
-		memberWithOnlyEmpty := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{emptyRole}}
-		// Should ignore the emptyRole and not find the target roleID
-		assert.False(t, HasRole(memberWithOnlyEmpty, roleID))
-	})
-
-	t.Run("member has whitespace role, searching specifically for whitespace role", func(t *testing.T) {
-		memberWithWhitespace := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID, whitespaceRole}}
-		// Should perform exact match and FIND the whitespaceRole when it's the target
-		assert.True(t, HasRole(memberWithWhitespace, whitespaceRole))
-	})
-
-	t.Run("member has empty string role, searching specifically for empty string role", func(t *testing.T) {
-		memberWithEmpty := &discordgo.Member{User: &discordgo.User{ID: "u1"}, Roles: []string{roleID, emptyRole}}
-		// Should perform exact match and FIND the emptyRole when it's the target
-		assert.True(t, HasRole(memberWithEmpty, emptyRole))
-	})
-
-	// --- End Whitespace Handling Tests ---
 }
