@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"fmt"
-	"github.com/Real-Dev-Squad/discord-service/utils"
-	"github.com/bwmarrin/discordgo"
-	"github.com/sirupsen/logrus"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Real-Dev-Squad/discord-service/models"
+	"github.com/Real-Dev-Squad/discord-service/utils"
+	"github.com/bwmarrin/discordgo"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -24,30 +26,6 @@ type CommandParams struct {
 	Dev       bool
 	DevTitle  bool
 }
-
-type DiscordSessionWrapper struct {
-	*discordgo.Session
-}
-
-func (s *DiscordSessionWrapper) GuildMembers(guildID string, after string, limit int) ([]*discordgo.Member, error) {
-	members, err := s.Session.GuildMembers(guildID, after, limit)
-	if err != nil {
-		return nil, err
-	}
-
-	return members, nil
-}
-
-func (s *DiscordSessionWrapper) ChannelMessageSend(channelID, content string) (*discordgo.Message, error) {
-	msg, err := s.Session.ChannelMessageSend(channelID, content)
-	if err != nil {
-		return nil, err
-	}
-
-	return msg, nil
-}
-
-var _ utils.DiscordSessionInterface = (*DiscordSessionWrapper)(nil)
 
 var (
 	extractCommandParamsFunc = func(metaData map[string]string) (CommandParams, error) {
@@ -113,7 +91,7 @@ var (
 		return params, nil // Return populated params
 	}
 
-	fetchMembersWithRoleFunc = func(session utils.DiscordSessionInterface, guildID, roleID, channelID string) ([]*discordgo.Member, error) {
+	fetchMembersWithRoleFunc = func(session models.SessionInterface, guildID, roleID, channelID string) ([]discordgo.Member, error) {
 		members, err := utils.GetUsersWithRole(session, guildID, roleID)
 		if err != nil {
 			logrus.WithFields(logrus.Fields{
@@ -135,7 +113,7 @@ var (
 		return members, nil
 	}
 
-	sendNoMembersMessageFunc = func(session utils.DiscordSessionInterface, channelID string) error {
+	sendNoMembersMessageFunc = func(session models.SessionInterface, channelID string) error {
 		messageContent := "Sorry, no members found with this role"
 		_, err := session.ChannelMessageSend(channelID, messageContent)
 		if err != nil {
@@ -149,7 +127,8 @@ var (
 		return nil
 	}
 
-	handleDevModeFunc = func(session utils.DiscordSessionInterface, mentions []string, params CommandParams) error {
+	// use mutex
+	handleDevModeFunc = func(session models.SessionInterface, mentions []string, params CommandParams) error {
 		logrus.WithFields(logrus.Fields{
 			"channelID": params.ChannelID,
 			"roleID":    params.RoleID,
@@ -216,7 +195,7 @@ var (
 		return nil
 	}
 
-	handleDevTitleModeFunc = func(session utils.DiscordSessionInterface, mentions []string, params CommandParams) error {
+	handleDevTitleModeFunc = func(session models.SessionInterface, mentions []string, params CommandParams) error {
 		response := utils.FormatUserListResponse(mentions, params.RoleID)
 		logrus.WithFields(logrus.Fields{
 			"channelID":          params.ChannelID,
@@ -237,7 +216,7 @@ var (
 		logrus.Infof("Successfully sent dev_title response")
 		return nil
 	}
-	handleStandardModeFunc = func(session utils.DiscordSessionInterface, mentions []string, params CommandParams) error {
+	handleStandardModeFunc = func(session models.SessionInterface, mentions []string, params CommandParams) error {
 
 		if len(mentions) == 0 {
 			logrus.Warnf("handleStandardModeFunc called with zero mentions for role %s. Sending 'no user' message.", params.RoleID)
@@ -296,7 +275,7 @@ func (s *CommandHandler) mentionEachHandler() error {
 		return fmt.Errorf("failed to create Discord session: %w", err)
 	}
 
-	sessionWrapper := &DiscordSessionWrapper{discordSession}
+	sessionWrapper := &models.SessionWrapper{Session: discordSession}
 
 	defer func() {
 		if closeErr := discordSession.Close(); closeErr != nil {
